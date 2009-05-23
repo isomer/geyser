@@ -1,0 +1,65 @@
+#!/usr/bin/python
+import fountain
+import mainloop
+import socket
+
+class ClientSocket:
+	def __init__(self,fd,addr):
+		self.addr = addr
+		self.fd = fd
+		mainloop.addReader(self)
+		self.buffer=""
+		self.fountain = fountain.block_generator(["hello",'world'])
+		self.active = False
+		self.blocksin = 0
+		self.blocksout = 0
+		self.lastsent = 0
+
+	def activate(self):
+		self.active = True
+		self.addWriter(self)
+
+	def writeEvent(self):
+		if self.buffer == "":
+			self.buffer = repr(self.fountain.next())
+		ret=self.fd.write(self.buffer)
+		if ret == -1:
+			mainloop.delWriter(self)
+		self.buffer=self.buffer[ret:]
+		if self.buffer == "":
+			self.lastsent = time.time()
+			pass
+
+	def readEvent(self):
+		print self.addr,">",self.fd.read(1024)
+
+class ServerSocket:
+	def __init__(self,fd,constructor):
+		self.fd.setblocking(0)
+		self.fd.listen(8)
+		self.constructor = constructor
+		mainloop.addReader(self)
+
+	def readEvent(self):
+		fd,addr = self.fd.accept()
+		self.constructor(fd,addr)
+
+def cmpClient(a,b):
+	# select the one that we owe more blocks to
+	if a.blocksin - a.blocksout != b.blocksin - b.blocksout:
+		return cmp(a.blocksin*2 - a.blocksout, b.blocksin*2 - blocksout)
+	# Select the one that has sent us more blocks
+	if a.blocksin != b.blocksin:
+		return cmp(a.blocksin, b.blocksin)
+	# TODO: Estimate bandwidth
+	# Select the one we sent a block to least recently
+	if a.lastsent != b.lastsent:
+		return -cmp(a.lastsent, b.lastsent)
+	
+	
+
+clients=[]
+incomplete=True
+			
+
+mainloop.run()
