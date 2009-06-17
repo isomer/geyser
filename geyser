@@ -2,52 +2,169 @@
 import fountain
 import mainloop
 import socket
+import encoder
+import time
+import sslsock
+import http
+
+import sys
+
+wantingdata = []
+interested=[]
+clients=[]
+blocks={}
 
 class ClientSocket:
 	def __init__(self,fd,addr):
 		self.addr = addr
 		self.fd = fd
 		mainloop.addReader(self)
-		self.buffer=""
+		self.outbuffer=""
+		self.inbuffer=""
 		self.fountain = fountain.block_generator(["hello",'world'])
-		self.active = False
 		self.blocksin = 0
 		self.blocksout = 0
-		self.lastsent = 0
+		self.iwantdata = 1
+		self.uwantdata = 0
+		self.ucommands = [ "HELLO" ]
+		self.uinterested = []
+		self.commands = {
+			"HELLO" : self.recv_hello,
+			"STATUS" : self.recv_status,
+			"BLOCK" : self.recv_block,
+		}
+		clients.append(self)
 
-	def activate(self):
-		self.active = True
-		self.addWriter(self)
+		self.send_greeting()
+	
+	def send_greeting(self):
+		# Ok, the hello command should at least consist of:
+		#  "commands" : a list of commands that we will accept.
+		#  "features" : a list of extended 'features' that this client
+		#		supports.  If you want to cleanup a command
+		#		I suggest you create a second version and use
+		#		that, but you could advertise that a command
+		#		accepts more data here.
+		#  "useragent" : a useragent. (optional)
+		# Clients should ignore dict entries they don't understand
+		self.send("HELLO",{
+			"commands" : self.commands.keys(),
+			"features" : [],
+			"useragent" : "Geyser-1.0",
+			})
+
+	def send_status(self):
+		# Status updates the far end on what we're willing to accept
+		# at the moment we have a "wantdata" that says if you want
+		# to get blocks.  generally you don't "wantdata" if you have
+		# the entire file, or perhaps if your link is congested.
+		# This could be extended to support more status attributes
+		# Clients should ignore dict entries they don't understand
+		#
+		# "interested" is a list of hashes of files we're interested
+		# in.  We hope if 'wantdata' is true, then they'll send us
+		# a block of that data.
+		assert "STATUS" in self.ucommands
+		self.send("STATUS",{
+			"wantdata" : self.iwantdata,
+			"interested" : interested,
+			})
+
+	def send_block(self,block):
+		# Send a block of data.  Assumes the remote end wants it
+		# Clients should ignore dict entries they don't understand
+		# hash is the hash of the file this belongs to.
+		assert self.uwantdata
+		self.send("BLOCK",{
+			"hash" : "hash",
+			"data" : self.fountain.next(),
+			})
+		self.blocksout += 1
+		
+	def send(self,t,ds):
+		assert t.upper() in self.ucommands
+		ds["type"]=t
+		if self.outbuffer=="":
+			mainloop.addWriter(self)
+		self.outbuffer += encoder.encode(ds)
 
 	def writeEvent(self):
-		if self.buffer == "":
-			self.buffer = repr(self.fountain.next())
-		ret=self.fd.write(self.buffer)
+		ret=self.fd.send(self.outbuffer)
 		if ret == -1:
 			mainloop.delWriter(self)
-		self.buffer=self.buffer[ret:]
-		if self.buffer == "":
+		print self.addr,"<",repr(self.outbuffer[:ret])
+		self.outbuffer = self.outbuffer[ret:]
+		if self.outbuffer == "":
 			self.lastsent = time.time()
-			pass
+			mainloop.delWriter(self)
 
 	def readEvent(self):
-		print self.addr,">",self.fd.read(1024)
+		buf = self.fd.recv(4096)
+		if buf == "":  # EOF
+			self.close()
+		print self.addr,">",repr(buf)
+		self.inbuffer += buf
+		try:
+			while self.inbuffer != "":
+				data,self.inbuffer = encoder.decode(
+						self.inbuffer)
+				self.commands[data["type"].upper()](data)
+		except encoder.TruncatedMessage:
+			pass
+	def fileno(self):
+		return self.fd.fileno()
+
+	def close(self):
+		mainloop.delReader(self)
+		if self.outbuffer != "":
+			mainloop.delWriter(self)
+		if self.uwantdata:
+			wantingdata.remove(self)
+		clients.remove(self)
+
+	def recv_hello(self,body):
+		self.ucommands = body["commands"] if "commands" in body else []
+		self.features = body["features"] if "features" in body else []
+		self.uuseragent = body["useragent"] if "useragent" in body else []
+		if "STATUS" in self.ucommands:
+			self.send_status()
+
+	def recv_status(self,body):
+		olduwantdata = self.uwantdata
+		self.uwantdata = body["uwantdata"] if "uwantdata" in body else 0
+		if self.uwantdata and not olduwantdata:
+			wantingdata.append(self)
+		elif not self.uwantdata and olduwantdata:
+			wantingdata.remove(self)
+		self.uinterested = body["uinterested"] \
+				if "uinterested" in body else []
+
+	def recv_block(self,body):
+		block = body["block"]
+		hash =  body["hash"]
+		blocks.get(hash,[]).append(block)
 
 class ServerSocket:
-	def __init__(self,fd,constructor):
-		self.fd.setblocking(0)
+	def __init__(self,fd,constructor,protocol):
+		self.fd = fd
 		self.fd.listen(8)
+		self.protocol = protocol
 		self.constructor = constructor
 		mainloop.addReader(self)
+		print "Listening on",self.fd.getsockname(),"for",constructor,protocol
 
 	def readEvent(self):
 		fd,addr = self.fd.accept()
 		self.constructor(fd,addr)
 
+	def fileno(self):
+		return self.fd.fileno()
+
 def cmpClient(a,b):
 	# select the one that we owe more blocks to
-	if a.blocksin - a.blocksout != b.blocksin - b.blocksout:
-		return cmp(a.blocksin*2 - a.blocksout, b.blocksin*2 - blocksout)
+	if min(a.blocksin - a.blocksout,0) != min(b.blocksin - b.blocksout,0):
+		return -cmp(min(a.blocksin*2 - a.blocksout,0), 
+				min(b.blocksin*2 - blocksout,0))
 	# Select the one that has sent us more blocks
 	if a.blocksin != b.blocksin:
 		return cmp(a.blocksin, b.blocksin)
@@ -55,11 +172,44 @@ def cmpClient(a,b):
 	# Select the one we sent a block to least recently
 	if a.lastsent != b.lastsent:
 		return -cmp(a.lastsent, b.lastsent)
-	
-	
 
-clients=[]
-incomplete=True
-			
+families = [ socket.AF_INET, socket.AF_INET6 ]
+adapters = [ (lambda x:x,""), (sslsock.wrap_server,"ssl-") ]
+protocols = [ (ClientSocket,"fountain"), (http.GeyserHTTPServer,'http') ]
 
+for family in families:
+	for (adapter,aname) in adapters:
+		for (protocol, pname) in protocols:
+			fd = socket.socket(family, socket.SOCK_STREAM, 0)
+			fd.bind(('',0))
+			fd.setblocking(0)
+			ServerSocket(adapter(fd),protocol,protocol=aname+pname)
+
+
+
+def connect(host,port):
+	for (family,socktype,proto,canonname,sockaddr) in socket.getaddrinfo(
+			host,port,
+			socket.AF_UNSPEC,
+			socket.SOCK_STREAM,
+			0,
+			socket.AI_ADDRCONFIG | socket.AI_V4MAPPED):
+		print (family,socktype,proto,canonname,sockaddr)
+		fd = socket.socket(family,socktype,proto)
+		fd.connect(sockaddr)
+		ClientSocket(fd, sockaddr)
+		break
+		
+		
+
+class Console:
+	def __init__(self):
+		mainloop.addReader(self)
+	def readEvent(self):
+		a=sys.stdin.readline()
+		exec(a)
+	def fileno(self):
+		return sys.stdin.fileno()
+	
+Console()
 mainloop.run()

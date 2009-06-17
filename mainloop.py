@@ -20,7 +20,7 @@ def addWriter(writer):
 def delWriter(writer):
 	writers.remove(writer)
 
-def run()
+def run():
 	while running:
 		now = time.time()
 		while timers!=[] and timers[0][0] <= now:
@@ -29,7 +29,11 @@ def run()
 			expire = timers[0][0]-time.time()
 		else:
 			expire = None
-		(r,w,x) = select.select(readers, writers, [], expire)
+		try:
+			(r,w,x) = select.select(readers, writers, [], expire)
+		except TypeError:
+			print readers,writers,expire
+			raise
 		for i in r:
 			i.readEvent()
 		for i in w:

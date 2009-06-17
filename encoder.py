@@ -1,12 +1,18 @@
 #!/usr/bin/env python
+
+class TruncatedMessage(Exception):
+	pass
+
 def decode_dict(msg):
 	assert msg[0] == "{",repr(msg)
 	msg=msg[1:]
 	d={}
-	while msg[0] != "}":
+	while msg!="" and msg[0] != "}":
 		k,msg = decode(msg)
 		v,msg = decode(msg)
 		d[k]=v
+	if msg=="":
+		raise TruncatedMessage()
 	return d,msg[1:]
 
 def decode_str(msg):
@@ -16,7 +22,8 @@ def decode_str(msg):
 	while msg[0] in "0123456789":
 		l=l*10 + ord(msg[0])-ord('0')
 		msg=msg[1:]
-	assert msg[0] == ":",repr(msg)
+	if msg=="":
+		raise TruncatedMessage()
 	return msg[1:l+1],msg[l+1:]
 	
 def decode_int(msg):
@@ -32,9 +39,11 @@ def decode_list(msg):
 	assert msg[0] == "[",repr(msg)
 	l=[]
 	msg=msg[1:]
-	while msg[0] not in "]":
+	while msg!="" and msg[0] not in "]":
 		v,msg = decode(msg)
 		l.append(v)
+	if msg == "":
+		raise TruncatedMessage()
 	return l,msg[1:]
 
 decodes = {
@@ -45,13 +54,18 @@ decodes = {
 }
 
 def decode(msg):
+	# Skip whitespace
+	while msg.startswith("\n") or msg.startswith("\r"):
+		msg=msg[1:]
+	if msg=="":
+		raise TruncatedMessage()
 	return decodes[msg[0]](msg)
 
 def encode(d):
 	if type(d)==type({}):
 		x = [(encode(a)+encode(b)) for (a,b) in d.items()]
 		return ("{" 
-			+ reduce(lambda a,b:a+b,x)
+			+ reduce(lambda a,b:a+b,x,"")
 			+ "}")
 	if type(d)==type([]):
 		if d==[]:
@@ -73,4 +87,9 @@ if __name__=="__main__":
 	e=encode(["Fish"])
 	print repr(e)
 	print decode(e)[0]
+	try:
+		d2=decode(e1[:-1])
+		print d2
+	except TruncatedMessage:
+		pass
 
