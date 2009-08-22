@@ -3,20 +3,35 @@ import bisect
 
 next_id = 0
 
-max_size = 2
+max_size = 10
 
 def gen_new_nodeid():
 	global next_id
 	next_id += 1
 	return "node" + str(next_id)
 
-def split_node(data):
+def split_data(data):
 	items = sorted(data)
 	items1 = items[:len(items)/2]
 	items2 = items[len(items)/2:]
 	return (dict([ (x,data[x]) for x in items1 ]),
 		dict([ (x,data[x]) for x in items2 ]))
 	
+def split_node(index,nodeid,(type,data)):
+	assert nodeid.startswith("node") or nodeid=="root",nodeid
+	lodata,hidata=split_data(data)
+	lohead=sorted(lodata)[0]
+	hihead=sorted(hidata)[0]
+	hinodeid = gen_new_nodeid()
+	if nodeid!="root":
+		lonodeid = nodeid
+	else:
+		lonodeid = gen_new_nodeid()
+		index[nodeid] = ("keys", { lohead:lonodeid, hihead:hinodeid })
+	print "splitting node",nodeid,"into",lonodeid,hinodeid
+	index[lonodeid] = (type,lodata)
+	index[hinodeid] = (type,hidata)
+	return ( (lohead,lonodeid), (hihead, hinodeid) )
 
 def add_to_index(index,nodeid,key,value):
 	assert nodeid in index,nodeid
@@ -25,24 +40,7 @@ def add_to_index(index,nodeid,key,value):
 	if type == "data":
 		data[key]=value
 		if len(data) > max_size: # Needs a split
-			nodeid2 = gen_new_nodeid()
-			items1, items2 = split_node(data)
-			if nodeid != "root":
-				nodeid1 = nodeid
-			else:
-				nodeid1 = gen_new_nodeid()
-			index[nodeid2] = ("data",items2)
-			index[nodeid1] = ("data",items1)
-			head1=sorted(items1)[0]
-			head2=sorted(items2)[0]
-			print "Splitting",nodeid,"into",nodeid1,"(",head1,")","and",nodeid2,"(",head2,")"
-			assert head1.startswith("key"),head1
-			assert head2.startswith("key"),head2
-			if nodeid == "root":
-				index[nodeid] = ("keys", { head1:nodeid1, head2:nodeid2 })
-			return (
-				(head1, nodeid1),
-				(head2, nodeid2))
+			return split_node(index,nodeid,(type,data))
 		else:
 			index[nodeid] = ("data",data)
 			assert sorted(data)[0].startswith("key")
@@ -70,19 +68,7 @@ def add_to_index(index,nodeid,key,value):
 			for (lokey,lonodeid) in ret:
 				data[lokey]=lonodeid
 			if len(data) > max_size:
-				lodata,hidata=split_node(data)
-				lohead=sorted(lodata)[0]
-				hihead=sorted(hidata)[0]
-				hinodeid = gen_new_nodeid()
-				if nodeid!="root":
-					lonodeid = nodeid
-				else:
-					lonodeid = gen_new_nodeid()
-					index[nodeid] = ("keys", { lohead:lonodeid, hihead:hinodeid })
-				print "splitting internal node",nodeid,"into",lonodeid,hinodeid
-				index[lonodeid] = ("keys",lodata)
-				index[hinodeid] = ("keys",hidata)
-				return ( (lohead,lonodeid), (hihead, hinodeid) )
+				return split_node(index,nodeid,(type,data))
 			else:
 				index[nodeid] = ("keys", data)
 				return ((sorted(data)[0],nodeid),)
@@ -105,6 +91,8 @@ if __name__ == "__main__":
 	for i in blocks:
 		try:
 			add_to_index(db,"root","key%d" % i,"value%d" % i)
+			print
+			pprint.pprint(db)
 		except:
 			print
 			pprint.pprint( db )
