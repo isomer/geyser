@@ -5,7 +5,7 @@ import sets
 blocks = [ "ABC","DEF","GHI","JKL","MNO","PQR","STU","VWX","YZ " ]
 
 def debug(*args):
-	#print "".join(map(str,args))
+	print "".join(map(str,args))
 	pass
 
 def xor(b1,b2):
