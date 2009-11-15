@@ -3,7 +3,10 @@ import bisect
 
 next_id = 0
 
-max_size = 10
+max_size = 5
+
+def debug(*msg):
+	print " ".join([str(x) for x in msg])
 
 def gen_new_nodeid():
 	global next_id
@@ -28,7 +31,7 @@ def split_node(index,nodeid,(type,data)):
 	else:
 		lonodeid = gen_new_nodeid()
 		index[nodeid] = ("keys", { lohead:lonodeid, hihead:hinodeid })
-	print "splitting node",nodeid,"into",lonodeid,hinodeid
+	debug("splitting node",nodeid,"into",lonodeid,hinodeid)
 	index[lonodeid] = (type,lodata)
 	index[hinodeid] = (type,hidata)
 	return ( (lohead,lonodeid), (hihead, hinodeid) )
@@ -48,7 +51,6 @@ def add_to_index(index,nodeid,key,value):
 	else:
 		items = sorted(data)
 		location = bisect.bisect_right(items, key)
-		#print key,"in",items,"->",items[location]
 		location = max(location-1,0)
 		assert items[location] <= key or location==0, (location, key, items[location])
 		#assert items[location] > key, (key,items[location-1])
@@ -57,13 +59,13 @@ def add_to_index(index,nodeid,key,value):
 			((lokey1,lonodeid1),) = ret
 			assert lokey1.startswith("key"),lokey1
 			if data[items[location]] != lonodeid1:
-				print "updating one key",lokey1,":",data[items[location]],"->",lonodeid1
+				debug("updating one key",lokey1,":",data[items[location]],"->",lonodeid1)
 			del data[items[location]]
 			data[lokey1]=lonodeid1
 			index[nodeid] = ("keys", data)
 			return ((sorted(data)[0],nodeid),)
 		else:
-			#print "updating",len(ret),"keys"
+			debug("updating",len(ret),"keys")
 			del data[items[location]]
 			for (lokey,lonodeid) in ret:
 				data[lokey]=lonodeid
@@ -91,8 +93,6 @@ if __name__ == "__main__":
 	for i in blocks:
 		try:
 			add_to_index(db,"root","key%d" % i,"value%d" % i)
-			print
-			pprint.pprint(db)
 		except:
 			print
 			pprint.pprint( db )
